@@ -72,7 +72,7 @@ class AiBrain(QObject):
         super().__init__(parent)
         self._mood = mood_state
         self._last_request_time: float = 0
-        self._worker: _AiWorker | None = None
+        self._workers: list = []  # keep refs to running workers
         self._ollama_available: bool | None = None  # None = not checked yet
 
     def _check_ollama(self) -> bool:
@@ -106,15 +106,7 @@ class AiBrain(QObject):
         self._last_request_time = now
 
         prompt = f"{self._mood.summary()}\n\nWhat just happened: {context}\n\nYour short reaction:"
-
-        # Clean up previous worker if still referenced
-        if self._worker is not None:
-            self._worker.deleteLater()
-
-        self._worker = _AiWorker(prompt)
-        self._worker.response_ready.connect(self._on_response)
-        self._worker.finished.connect(self._worker.deleteLater)
-        self._worker.start()
+        self._spawn_worker(prompt)
 
     def generate_chat_reply(self, user_message: str):
         """Generate a reply for the chat window.
@@ -134,14 +126,23 @@ class AiBrain(QObject):
             f"The human says to you: \"{user_message}\"\n\n"
             f"Reply conversationally (max 20 words):"
         )
+        self._spawn_worker(prompt)
 
-        if self._worker is not None:
-            self._worker.deleteLater()
+    def _spawn_worker(self, prompt: str):
+        """Create and start a worker thread for the given prompt."""
+        worker = _AiWorker(prompt)
+        worker.response_ready.connect(self._on_response)
+        worker.finished.connect(lambda: self._cleanup_worker(worker))
+        self._workers.append(worker)
+        worker.start()
 
-        self._worker = _AiWorker(prompt)
-        self._worker.response_ready.connect(self._on_response)
-        self._worker.finished.connect(self._worker.deleteLater)
-        self._worker.start()
+    def _cleanup_worker(self, worker):
+        """Remove finished worker from the list."""
+        try:
+            self._workers.remove(worker)
+        except ValueError:
+            pass
+        worker.deleteLater()
 
     def _on_response(self, text: str):
         """Handle AI response from worker thread."""
