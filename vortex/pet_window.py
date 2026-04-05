@@ -13,6 +13,7 @@ class PetWindow(QWidget):
 
     # Signals
     petted = pyqtSignal()
+    double_clicked = pyqtSignal()
     drag_started = pyqtSignal()
     drag_released = pyqtSignal(float, float)  # vx, vy in px/sec
     position_changed = pyqtSignal(int, int)
@@ -142,6 +143,10 @@ class PetWindow(QWidget):
 
             self._drag_offset = None
             self._dragging = False
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.double_clicked.emit()
 
     def _compute_velocity(self) -> tuple[float, float]:
         """Compute velocity in pixels/second from the drag history ring buffer."""

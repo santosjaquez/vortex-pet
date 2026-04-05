@@ -105,6 +105,8 @@ class StateMachine(QObject):
         self._physics = None
         self._bubble = None
         self._window_detector = None
+        self._brain = None
+        self._mood = None
 
         # State duration timer (singleShot)
         self._state_timer = QTimer(self)
@@ -151,6 +153,14 @@ class StateMachine(QObject):
     def set_window_detector(self, detector):
         """Connect the window detector after construction."""
         self._window_detector = detector
+
+    def set_ai_brain(self, brain):
+        """Connect the AI brain for contextual messages."""
+        self._brain = brain
+
+    def set_mood(self, mood_state):
+        """Connect the mood tracker."""
+        self._mood = mood_state
 
     # ------------------------------------------------------------------
     # Core transition
@@ -468,6 +478,8 @@ class StateMachine(QObject):
         """User clicked on the pet (without dragging)."""
         if self._state in _UNINTERRUPTIBLE:
             return
+        if self._mood is not None:
+            self._mood.on_petted()
         self.transition(PetState.PETTED, speech=self._random_msg("petted"))
 
     def on_drag_started(self):
@@ -499,30 +511,50 @@ class StateMachine(QObject):
 
         tool_name = data.get("tool_name", "")
 
+        # Update mood
+        if self._mood is not None:
+            if event_name == "PostToolUse":
+                self._mood.on_tool_use()
+            elif event_name == "PostToolUseFailure":
+                self._mood.on_error()
+            elif event_name == "Stop":
+                self._mood.on_success()
+            elif event_name == "SessionStart":
+                self._mood.on_session_start()
+
+        # Try AI-generated comment (non-blocking, falls back to preset)
+        ai_requested = False
+        if self._brain is not None:
+            context = self._brain.build_tool_context(event_name, data)
+            self._brain.generate_comment(context)
+            ai_requested = True
+
         if event_name == "PostToolUse":
             if tool_name in _ACTIVE_TOOLS:
-                self.transition(PetState.TYPING, speech=self._random_msg("typing"))
+                speech = None if ai_requested else self._random_msg("typing")
+                self.transition(PetState.TYPING, speech=speech)
             elif tool_name in _PASSIVE_TOOLS:
-                # Just show a small bubble, don't change state
-                self._show_bubble_text(self._random_msg("typing"))
+                if not ai_requested:
+                    self._show_bubble_text(self._random_msg("typing"))
 
         elif event_name == "PostToolUseFailure":
-            self.transition(PetState.SAD, speech=self._random_msg("sad"))
+            speech = None if ai_requested else self._random_msg("sad")
+            self.transition(PetState.SAD, speech=speech)
 
         elif event_name == "Stop":
+            speech = None if ai_requested else self._random_msg("happy")
             if random.random() < 0.5:
-                self.transition(PetState.HAPPY, speech=self._random_msg("happy"))
+                self.transition(PetState.HAPPY, speech=speech)
             else:
-                self.transition(
-                    PetState.CELEBRATING, speech=self._random_msg("celebrate")
-                )
+                self.transition(PetState.CELEBRATING, speech=speech)
 
         elif event_name == "Notification":
             text = str(data.get("tool_response", "Hey!"))[:60]
             self.transition(PetState.HAPPY, speech=text)
 
         elif event_name == "SessionStart":
-            self.transition(PetState.CELEBRATING, speech=self._random_msg("greet"))
+            speech = None if ai_requested else self._random_msg("greet")
+            self.transition(PetState.CELEBRATING, speech=speech)
 
         elif event_name == "SessionEnd":
             self.transition(PetState.SLEEPING, speech=self._random_msg("sleep"))
