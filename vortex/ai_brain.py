@@ -74,6 +74,8 @@ class AiBrain(QObject):
         self._last_request_time: float = 0
         self._workers: list = []  # keep refs to running workers
         self._ollama_available: bool | None = None  # None = not checked yet
+        self._chat_history: list[tuple[str, str]] = []  # (role, text) pairs
+        self._max_history = 20  # keep last 20 exchanges
 
     def _check_ollama(self) -> bool:
         """Check if Ollama is running (cached for 30s)."""
@@ -109,7 +111,7 @@ class AiBrain(QObject):
         self._spawn_worker(prompt)
 
     def generate_chat_reply(self, user_message: str):
-        """Generate a reply for the chat window.
+        """Generate a reply for the chat window with conversation history.
 
         Args:
             user_message: What the user typed to Vortex
@@ -121,20 +123,41 @@ class AiBrain(QObject):
 
         self._last_request_time = now
 
+        # Add user message to history
+        self._chat_history.append(("human", user_message))
+        if len(self._chat_history) > self._max_history:
+            self._chat_history = self._chat_history[-self._max_history:]
+
+        # Build prompt with conversation history
+        history_text = ""
+        for role, text in self._chat_history:
+            if role == "human":
+                history_text += f"Human: {text}\n"
+            else:
+                history_text += f"Vortex: {text}\n"
+
         prompt = (
             f"{self._mood.summary()}\n\n"
-            f"The human says to you: \"{user_message}\"\n\n"
-            f"Reply conversationally (max 20 words):"
+            f"Conversation so far:\n{history_text}\n"
+            f"Reply as Vortex (max 20 words, stay in character, remember the conversation):"
         )
-        self._spawn_worker(prompt)
 
-    def _spawn_worker(self, prompt: str):
+        worker = self._spawn_worker(prompt)
+        # Store the pending message so we can add the reply to history
+        worker.response_ready.connect(self._on_chat_response)
+
+    def _on_chat_response(self, text: str):
+        """Store Vortex's reply in chat history."""
+        self._chat_history.append(("vortex", text))
+
+    def _spawn_worker(self, prompt: str) -> _AiWorker:
         """Create and start a worker thread for the given prompt."""
         worker = _AiWorker(prompt)
         worker.response_ready.connect(self._on_response)
         worker.finished.connect(lambda: self._cleanup_worker(worker))
         self._workers.append(worker)
         worker.start()
+        return worker
 
     def _cleanup_worker(self, worker):
         """Remove finished worker from the list."""
