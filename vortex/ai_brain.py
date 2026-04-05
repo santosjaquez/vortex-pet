@@ -153,7 +153,7 @@ class AiBrain(QObject):
         self._chat_history.append(("vortex", text))
 
     def analyze_screen(self, user_question: str = ""):
-        """Take a screenshot and analyze it with the vision model.
+        """Take a screenshot, OCR it, and analyze with text LLM.
 
         Args:
             user_question: Optional question about what's on screen.
@@ -170,30 +170,48 @@ class AiBrain(QObject):
             return
 
         pixmap = screen.grabWindow(0)
-        # Scale down to reduce processing time (max 1280px wide)
-        if pixmap.width() > 1280:
-            pixmap = pixmap.scaledToWidth(1280)
 
-        # Save to temp file and read as base64
-        import tempfile, os
-        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-        pixmap.save(tmp.name, "PNG")
-        with open(tmp.name, "rb") as f:
-            img_b64 = base64.b64encode(f.read()).decode()
-        os.unlink(tmp.name)
+        # Save to temp file for OCR
+        import os
+        tmp_path = "/tmp/vortex_screen_ocr.png"
+        pixmap.save(tmp_path, "PNG")
 
-        prompt = user_question if user_question else "Describe briefly what you see on screen."
-        prompt += "\nRespond concisely in 1-2 sentences. Use the same language as the question."
-
-        worker = _AiWorker(prompt, model=VISION_MODEL, images=[img_b64])
-        worker.response_ready.connect(self._on_response)
-        worker.response_ready.connect(self._on_chat_response)
-        worker.finished.connect(lambda: self._cleanup_worker(worker))
-        self._workers.append(worker)
-        worker.start()
+        # Run tesseract OCR
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["tesseract", tmp_path, "-", "-l", "spa+eng"],
+                capture_output=True, text=True, timeout=10
+            )
+            screen_text = result.stdout.strip()[:2000]  # limit to 2000 chars
+        except Exception:
+            screen_text = "(could not read screen)"
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
         # Add to history
         self._chat_history.append(("human", f"[Looking at screen] {user_question}"))
+
+        # Build prompt with screen content
+        question = user_question if user_question else "What do you see on my screen?"
+        prompt = (
+            f"{self._mood.summary()}\n\n"
+            f"Conversation so far:\n"
+            + "".join(f"{'Human' if r=='human' else 'Vortex'}: {t}\n"
+                      for r, t in self._chat_history) +
+            f"\nThe user asked you to look at their screen. "
+            f"Here is the text visible on screen (extracted via OCR):\n"
+            f"---\n{screen_text}\n---\n\n"
+            f"User's question: {question}\n"
+            f"Respond helpfully in 2-3 sentences based on what you can see. "
+            f"Use the same language as the question."
+        )
+
+        worker = self._spawn_worker(prompt)
+        worker.response_ready.connect(self._on_chat_response)
 
     def _spawn_worker(self, prompt: str) -> _AiWorker:
         """Create and start a worker thread for the given prompt."""
