@@ -1,0 +1,12 @@
+{
+  "idle":      {"frames": 6, "fps": 6,  "loop": true},
+  "walk":      {"frames": 6, "fps": 8,  "loop": true},
+  "sleep":     {"frames": 4, "fps": 3,  "loop": true},
+  "happy":     {"frames": 4, "fps": 8,  "loop": false},
+  "sad":       {"frames": 4, "fps": 6,  "loop": false},
+  "typing":    {"frames": 4, "fps": 6,  "loop": true},
+  "petted":    {"frames": 4, "fps": 8,  "loop": false},
+  "confused":  {"frames": 4, "fps": 6,  "loop": false},
+  "celebrate": {"frames": 6, "fps": 10, "loop": false},
+  "fall":      {"frames": 2, "fps": 8,  "loop": true}
+}

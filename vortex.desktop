@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Vortex
+Comment=Desktop pet axolotl that integrates with Claude Code
+Exec=python3 -m vortex
+Path=/home/ericksantosjaquez/vortex-pet
+Icon=/home/ericksantosjaquez/vortex-pet/vortex/assets/icon.png
+Terminal=false
+Type=Application
+Categories=Utility;
+StartupWMClass=vortex
