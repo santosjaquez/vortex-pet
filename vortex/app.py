@@ -25,8 +25,9 @@ from vortex.ai_brain import AiBrain
 from vortex.chat_window import ChatWindow
 
 
-def _cleanup_socket():
-    """Remove the Unix socket file on exit."""
+def _cleanup():
+    """Clean up resources on exit."""
+    # Remove Unix socket
     try:
         if os.path.exists(SOCKET_PATH):
             os.unlink(SOCKET_PATH)
@@ -122,10 +123,18 @@ def main():
     mood_timer.timeout.connect(mood.decay)
     mood_timer.start(30000)
 
+    # -- Cleanup on exit --------------------------------------------------
+    def shutdown():
+        _cleanup()
+        win_detector.stop()
+        router.stop()
+
+    app.aboutToQuit.connect(shutdown)
+    atexit.register(_cleanup)
+
     # -- Start socket server and window detector --------------------------
     router.start()
     win_detector.start()
-    atexit.register(_cleanup_socket)
 
     # -- Place pet on screen, start idle ----------------------------------
     physics.place_on_ground()
