@@ -83,32 +83,20 @@ def main():
     # PhysicsEngine landed_on_window(int) -> StateMachine
     physics.landed_on_window.connect(fsm.on_landed_on_window)
 
-    # AI Brain -> Speech bubble (show AI-generated messages)
+    # AI Brain -> Speech bubble (show AI-generated messages from hooks)
     def on_ai_message(text):
         anchor = (pet.x() + SPRITE_SIZE // 2, pet.y())
         bubble.show_message(text, BUBBLE_DURATION_MS, anchor)
     brain.message_ready.connect(on_ai_message)
 
-    # Chat window: user message -> AI brain -> chat response
-    def on_chat_user_msg(text):
+    # Chat uses a separate AiBrain so hook comments and chat don't interfere
+    chat_brain = AiBrain(mood)
+    chat_brain.message_ready.connect(chat.add_vortex_message)
+
+    def on_chat_send(text):
         chat.show_typing_indicator()
-        brain.generate_chat_reply(text)
-
-    def on_chat_ai_reply(text):
-        chat.add_vortex_message(text)
-
-    chat.user_message.connect(on_chat_user_msg)
-
-    # For chat, we need a separate signal path (not the bubble)
-    # Create a dedicated connection for chat replies
-    _chat_brain = AiBrain(mood)
-    _chat_brain.message_ready.connect(on_chat_ai_reply)
-    chat.user_message.connect(lambda text: (
-        chat.show_typing_indicator(),
-        _chat_brain.generate_chat_reply(text),
-    ))
-    # Disconnect the simple handler since we're using _chat_brain
-    chat.user_message.disconnect(on_chat_user_msg)
+        chat_brain.generate_chat_reply(text)
+    chat.user_message.connect(on_chat_send)
 
     # Double-click pet -> open chat
     def on_pet_double_click():
