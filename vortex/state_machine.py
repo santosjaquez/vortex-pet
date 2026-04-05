@@ -99,7 +99,7 @@ class StateMachine(QObject):
 
         self._renderer = sprite_renderer
         self._window = pet_window
-        self._state: PetState = PetState.IDLE
+        self._state: PetState = None  # no initial state; first transition() sets it
 
         # Deferred dependencies
         self._physics = None
@@ -127,6 +127,8 @@ class StateMachine(QObject):
         # Climbing state
         self._climb_edge = None  # Edge being climbed
         self._climb_direction: int = -1  # -1 = up, 1 = down
+        self._target_edge = None  # Edge we're walking toward
+        self._walk_target_x: int = None  # X position to reach before climbing
 
         # Walking on window surface
         self._on_window_surface: bool = False
@@ -288,6 +290,22 @@ class StateMachine(QObject):
 
         new_x = current_x + int(WALK_SPEED * self._walk_direction)
 
+        # Check if we've reached a target edge to climb
+        if (self._state == PetState.WALKING
+                and self._target_edge is not None
+                and self._walk_target_x is not None):
+            if abs(new_x - self._walk_target_x) < 5:
+                edge = self._target_edge
+                self._target_edge = None
+                self._walk_target_x = None
+                self._climb_edge = edge
+                self._climb_direction = -1
+                self._walk_timer.stop()
+                self.transition(PetState.CLIMBING, speech=random.choice(
+                    ["Wheee!", "*climb climb*", "Up we go!"]
+                ))
+                return
+
         # If walking on a window, constrain to window edges
         if self._state == PetState.WALKING_ON_WINDOW and self._window_edge is not None:
             edge = self._window_edge
@@ -325,17 +343,59 @@ class StateMachine(QObject):
     # ------------------------------------------------------------------
 
     def _try_start_climbing(self) -> bool:
-        """Try to find a nearby window edge to climb. Returns True if started."""
+        """Find nearest window edge and walk toward it, then climb."""
         if self._window_detector is None:
             return False
+
+        # First check if already touching an edge
         edge = self._window_detector.find_climbable_edge(
             self._window.x(), self._window.y(), SPRITE_SIZE
         )
-        if edge is None:
+        if edge is not None:
+            self._climb_edge = edge
+            self._climb_direction = -1
+            self.transition(PetState.CLIMBING, speech=random.choice(
+                ["Wheee!", "*climb climb*", "Up we go!"]
+            ))
+            return True
+
+        # Find nearest window edge at same floor level and walk toward it
+        pet_x = self._window.x()
+        pet_y = self._window.y()
+        best_edge = None
+        best_dist = float("inf")
+
+        for edge in self._window_detector.edges:
+            if edge.edge_type not in ("left", "right"):
+                continue
+            # Only consider edges that extend to near the pet's Y level
+            edge_bottom = edge.y + edge.height
+            if edge_bottom < pet_y:
+                continue  # edge is above the pet, unreachable
+
+            # Calculate horizontal distance
+            if edge.edge_type == "left":
+                target_x = edge.x - SPRITE_SIZE
+            else:
+                target_x = edge.x + edge.width
+            dist = abs(pet_x - target_x)
+
+            if dist < best_dist and dist < 800:  # max 800px to walk
+                best_dist = dist
+                best_edge = edge
+
+        if best_edge is None:
             return False
-        self._climb_edge = edge
-        self._climb_direction = -1  # climb up
-        self.transition(PetState.CLIMBING, speech=random.choice(["Wheee!", "*climb climb*", "Up we go!"]))
+
+        # Set target and walk toward it
+        self._target_edge = best_edge
+        if best_edge.edge_type == "left":
+            target_x = best_edge.x - SPRITE_SIZE
+        else:
+            target_x = best_edge.x + best_edge.width
+        self._walk_direction = 1 if target_x > pet_x else -1
+        self._walk_target_x = target_x
+        self.transition(PetState.WALKING)
         return True
 
     def _climb_tick(self):
@@ -427,6 +487,8 @@ class StateMachine(QObject):
         self._on_window_surface = False
         self._window_edge = None
         self._climb_edge = None
+        self._target_edge = None
+        self._walk_target_x = None
         self.transition(PetState.IDLE)
 
     def on_hook_event(self, event_name: str, data: dict):
