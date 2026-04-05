@@ -5,8 +5,10 @@ Generates contextual, personality-driven messages using a local LLM (Ollama).
 Falls back to preset messages if Ollama is unavailable.
 """
 
+import base64
 import json
 import time
+import tempfile
 from urllib.request import urlopen, Request
 from urllib.error import URLError
 
@@ -14,48 +16,54 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL = "qwen2.5:3b"
+VISION_MODEL = "moondream"
 MIN_REQUEST_INTERVAL = 3.0  # seconds between AI requests
 
-SYSTEM_PROMPT = """You are Vortex, an adorable axolotl who lives on a human's desktop as a pet companion. You watch them code and make short, cute comments.
+SYSTEM_PROMPT = """You are Vortex, a sharp and witty AI assistant that lives on a developer's desktop as a compact companion. You observe their workflow and make concise, useful comments.
 
 Rules:
-- Maximum 12 words per response
-- Be cute, playful, and supportive
-- Use occasional axolotl-themed words (blub, wiggle, splash)
-- React to what the human is doing (editing files, running commands, fixing bugs)
-- Your mood affects your tone: happy=enthusiastic, grumpy=sarcastic but loving, sleepy=drowsy, bored=restless
-- Mix English and Spanish occasionally since the user speaks Spanish
-- Never use hashtags or emojis, just plain text
-- Be specific about what you see (file names, commands) when possible"""
+- Maximum 15 words per response
+- Be direct, clever, and genuinely helpful — not childish or cutesy
+- NO baby talk, NO "blub", "splash", "wiggle", or similar infantile words
+- Speak like a smart coworker: dry humor, tech-savvy, occasionally sarcastic
+- React specifically to what the developer is doing (file names, commands, errors)
+- Your mood affects tone: happy=confident, grumpy=blunt, sleepy=minimal, bored=impatient
+- Respond in Spanish if the user writes in Spanish, English if in English
+- Never use hashtags or emojis
+- Be concise and valuable — if you have nothing useful to say, say something witty instead"""
 
 
 class _AiWorker(QThread):
     """Background worker that calls Ollama API."""
     response_ready = pyqtSignal(str)
 
-    def __init__(self, prompt: str, parent=None):
+    def __init__(self, prompt: str, model: str = None, images: list = None, parent=None):
         super().__init__(parent)
         self._prompt = prompt
+        self._model = model or MODEL
+        self._images = images  # list of base64-encoded images
 
     def run(self):
         try:
-            payload = json.dumps({
-                "model": MODEL,
+            payload = {
+                "model": self._model,
                 "prompt": self._prompt,
                 "system": SYSTEM_PROMPT,
                 "stream": False,
                 "options": {
                     "temperature": 0.8,
-                    "num_predict": 30,  # ~15 words max
+                    "num_predict": 80,
                     "top_p": 0.9,
                 }
-            }).encode()
-            req = Request(OLLAMA_URL, data=payload,
+            }
+            if self._images:
+                payload["images"] = self._images
+            data_bytes = json.dumps(payload).encode()
+            req = Request(OLLAMA_URL, data=data_bytes,
                          headers={"Content-Type": "application/json"})
-            with urlopen(req, timeout=30) as resp:
+            with urlopen(req, timeout=60) as resp:
                 data = json.loads(resp.read())
                 text = data.get("response", "").strip()
-                # Clean up: take first sentence only, remove quotes
                 text = text.split("\n")[0].strip('" ')
                 if text:
                     self.response_ready.emit(text)
@@ -143,6 +151,49 @@ class AiBrain(QObject):
     def _on_chat_response(self, text: str):
         """Store Vortex's reply in chat history."""
         self._chat_history.append(("vortex", text))
+
+    def analyze_screen(self, user_question: str = ""):
+        """Take a screenshot and analyze it with the vision model.
+
+        Args:
+            user_question: Optional question about what's on screen.
+        """
+        if not self._check_ollama():
+            self.message_ready.emit("Ollama isn't running.")
+            return
+
+        # Take screenshot using PyQt6
+        from PyQt6.QtWidgets import QApplication
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            self.message_ready.emit("Can't capture screen.")
+            return
+
+        pixmap = screen.grabWindow(0)
+        # Scale down to reduce processing time (max 1280px wide)
+        if pixmap.width() > 1280:
+            pixmap = pixmap.scaledToWidth(1280)
+
+        # Save to temp file and read as base64
+        import tempfile, os
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        pixmap.save(tmp.name, "PNG")
+        with open(tmp.name, "rb") as f:
+            img_b64 = base64.b64encode(f.read()).decode()
+        os.unlink(tmp.name)
+
+        prompt = user_question if user_question else "Describe briefly what you see on screen."
+        prompt += "\nRespond concisely in 1-2 sentences. Use the same language as the question."
+
+        worker = _AiWorker(prompt, model=VISION_MODEL, images=[img_b64])
+        worker.response_ready.connect(self._on_response)
+        worker.response_ready.connect(self._on_chat_response)
+        worker.finished.connect(lambda: self._cleanup_worker(worker))
+        self._workers.append(worker)
+        worker.start()
+
+        # Add to history
+        self._chat_history.append(("human", f"[Looking at screen] {user_question}"))
 
     def _spawn_worker(self, prompt: str) -> _AiWorker:
         """Create and start a worker thread for the given prompt."""

@@ -20,15 +20,15 @@ class SpeechBubble(QWidget):
     FONT_SIZE = 11
 
     MESSAGES: dict[str, list[str]] = {
-        "petted": ["That tickles!", "Hewwo!", ":3", "Blub blub!", "*happy wiggles*"],
-        "idle": ["...", "*yawn*", "Blub?", "~♪", "*looks around*"],
-        "happy": ["Yay!", "Nice!", "We did it!", "Woohoo!", "^_^"],
-        "sad": ["Oh no...", "Hmm...", "Oops!", ">_<", "*sad blub*"],
-        "typing": ["Working on it...", "Let me see...", "*tap tap*", "Hmm..."],
-        "confused": ["Huh?", "That's weird...", "???", "*head tilt*"],
-        "celebrate": ["We did it!", "Amazing!", "Party time!", "*confetti*"],
-        "sleep": ["Zzz...", "*snore*", "Five more minutes..."],
-        "greet": ["Let's go!", "Hi there!", "Ready to code!", "Blub!"],
+        "petted": ["Hey.", "What's up?", "I'm here.", "Need something?"],
+        "idle": ["...", "Waiting.", "All clear.", "Standing by."],
+        "happy": ["Nice.", "Solid.", "That worked.", "Clean."],
+        "sad": ["That failed.", "Check the output.", "Something broke.", "Hmm."],
+        "typing": ["On it.", "Processing...", "Working...", "Let me check."],
+        "confused": ["That's odd.", "Unexpected.", "Double check that.", "Huh."],
+        "celebrate": ["Done.", "Ship it.", "Nailed it.", "All green."],
+        "sleep": ["Idle.", "Taking a break.", "Low power mode."],
+        "greet": ["Ready.", "Let's work.", "Online.", "What's the plan?"],
     }
 
     def __init__(self, parent=None):

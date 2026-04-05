@@ -93,9 +93,17 @@ def main():
     chat_brain = AiBrain(mood)
     chat_brain.message_ready.connect(chat.add_vortex_message)
 
+    # Keywords that trigger screen analysis
+    _SCREEN_KEYWORDS = ["pantalla", "screen", "mira", "look", "ve mi", "que ves",
+                        "what do you see", "que hay", "screenshot", "captura"]
+
     def on_chat_send(text):
         chat.show_typing_indicator()
-        chat_brain.generate_chat_reply(text)
+        text_lower = text.lower()
+        if any(kw in text_lower for kw in _SCREEN_KEYWORDS):
+            chat_brain.analyze_screen(text)
+        else:
+            chat_brain.generate_chat_reply(text)
     chat.user_message.connect(on_chat_send)
 
     # Double-click pet -> open chat
