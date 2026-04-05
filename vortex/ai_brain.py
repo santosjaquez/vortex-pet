@@ -52,15 +52,16 @@ class _AiWorker(QThread):
             }).encode()
             req = Request(OLLAMA_URL, data=payload,
                          headers={"Content-Type": "application/json"})
-            with urlopen(req, timeout=10) as resp:
+            with urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read())
                 text = data.get("response", "").strip()
                 # Clean up: take first sentence only, remove quotes
                 text = text.split("\n")[0].strip('" ')
                 if text:
                     self.response_ready.emit(text)
-        except Exception:
-            pass  # silently fail, fallback messages will be used
+        except Exception as e:
+            import sys
+            print(f"[Vortex AI] Worker error: {e}", file=sys.stderr, flush=True)
 
 
 class AiBrain(QObject):
@@ -73,23 +74,16 @@ class AiBrain(QObject):
         self._mood = mood_state
         self._last_request_time: float = 0
         self._workers: list = []  # keep refs to running workers
-        self._ollama_available: bool | None = None  # None = not checked yet
         self._chat_history: list[tuple[str, str]] = []  # (role, text) pairs
         self._max_history = 20  # keep last 20 exchanges
 
     def _check_ollama(self) -> bool:
-        """Check if Ollama is running (cached for 30s)."""
-        if self._ollama_available is not None:
-            return self._ollama_available
+        """Check if Ollama is running."""
         try:
-            with urlopen("http://localhost:11434/api/tags", timeout=2) as resp:
-                self._ollama_available = resp.status == 200
+            with urlopen("http://localhost:11434/", timeout=2) as resp:
+                return resp.status == 200
         except Exception:
-            self._ollama_available = False
-        # Re-check after 30 seconds
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(30000, lambda: setattr(self, '_ollama_available', None))
-        return self._ollama_available
+            return False
 
     def generate_comment(self, context: str):
         """Request an AI-generated comment based on context.
