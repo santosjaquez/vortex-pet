@@ -8,5 +8,6 @@
   "petted":    {"frames": 4, "fps": 8,  "loop": false},
   "confused":  {"frames": 4, "fps": 6,  "loop": false},
   "celebrate": {"frames": 6, "fps": 10, "loop": false},
-  "fall":      {"frames": 2, "fps": 8,  "loop": true}
+  "fall":      {"frames": 2, "fps": 8,  "loop": true},
+  "climb":     {"frames": 4, "fps": 6,  "loop": true}
 }

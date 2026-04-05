@@ -8,10 +8,12 @@ class PhysicsEngine(QObject):
     """Simple 2D physics for dropping, bouncing, and sliding the desktop pet."""
 
     landed = pyqtSignal()
+    landed_on_window = pyqtSignal(int)  # surface_y where pet landed
 
     def __init__(self, pet_window, parent=None):
         super().__init__(parent)
         self._pet = pet_window
+        self._window_detector = None
 
         # Screen geometry
         self._screen_rect = QApplication.primaryScreen().availableGeometry()
@@ -29,6 +31,10 @@ class PhysicsEngine(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(TICK_MS)
         self._timer.timeout.connect(self._tick)
+
+    def set_window_detector(self, detector):
+        """Connect the window detector for surface collision."""
+        self._window_detector = detector
 
     # ------------------------------------------------------------------ #
     # Properties
@@ -104,7 +110,26 @@ class PhysicsEngine(QObject):
         # 3. Air friction on horizontal velocity
         self._vx *= 0.98
 
-        # 4. Floor collision
+        # 4. Check window surfaces (before floor check)
+        if self._window_detector is not None and self._vy > 0:
+            surface = self._window_detector.find_surface_below(
+                int(self._x), int(self._y), SPRITE_SIZE
+            )
+            if surface is not None:
+                surface_y, _ = surface
+                if self._y >= surface_y:
+                    self._y = float(surface_y)
+                    self._vy = -self._vy * BOUNCE_DAMPING
+                    self._vx *= 0.8
+                    if abs(self._vy) < GROUND_THRESHOLD:
+                        self._vy = 0.0
+                        if abs(self._vx) < 0.5:
+                            self._timer.stop()
+                            self._pet.move_to(int(self._x), int(self._y))
+                            self.landed_on_window.emit(surface_y)
+                            return
+
+        # 5. Floor collision
         if self._y >= self._floor_y:
             self._y = float(self._floor_y)
             self._vy = -self._vy * BOUNCE_DAMPING
@@ -118,7 +143,7 @@ class PhysicsEngine(QObject):
                     self.landed.emit()
                     return
 
-        # 5. Wall collision
+        # 6. Wall collision
         left_bound = float(self._screen_rect.left())
         right_bound = float(self._screen_rect.right() - SPRITE_SIZE)
 
@@ -129,5 +154,5 @@ class PhysicsEngine(QObject):
             self._x = right_bound
             self._vx = -self._vx * 0.5
 
-        # 6. Move the widget
+        # 7. Move the widget
         self._pet.move_to(int(self._x), int(self._y))

@@ -22,6 +22,8 @@ from vortex.config import (
     TICK_MS,
     SPRITE_SIZE,
     BUBBLE_DURATION_MS,
+    CLIMB_SPEED,
+    WALK_ON_WINDOW_PROB,
 )
 
 
@@ -37,6 +39,8 @@ class PetState(enum.Enum):
     CELEBRATING = "celebrating"
     FALLING = "falling"
     DRAGGING = "dragging"
+    CLIMBING = "climbing"
+    WALKING_ON_WINDOW = "walking_on_window"
 
 
 # Map PetState -> animation name in sprites.json
@@ -51,6 +55,8 @@ _STATE_ANIM = {
     PetState.CONFUSED: "confused",
     PetState.CELEBRATING: "celebrate",
     PetState.FALLING: "fall",
+    PetState.CLIMBING: "climb",
+    PetState.WALKING_ON_WINDOW: "walk",
     # DRAGGING keeps whatever animation was playing
 }
 
@@ -61,6 +67,8 @@ _LOOPING_STATES = {
     PetState.SLEEPING,
     PetState.TYPING,
     PetState.FALLING,
+    PetState.CLIMBING,
+    PetState.WALKING_ON_WINDOW,
 }
 
 # Reaction states: animation plays once, then _on_reaction_done fires
@@ -73,7 +81,7 @@ _REACTION_STATES = {
 }
 
 # States that should not be interrupted by hook events
-_UNINTERRUPTIBLE = {PetState.DRAGGING, PetState.FALLING}
+_UNINTERRUPTIBLE = {PetState.DRAGGING, PetState.FALLING, PetState.CLIMBING}
 
 # Tool names that trigger TYPING state
 _ACTIVE_TOOLS = {"Bash", "Edit", "Write", "NotebookEdit"}
@@ -96,6 +104,7 @@ class StateMachine(QObject):
         # Deferred dependencies
         self._physics = None
         self._bubble = None
+        self._window_detector = None
 
         # State duration timer (singleShot)
         self._state_timer = QTimer(self)
@@ -107,8 +116,22 @@ class StateMachine(QObject):
         self._walk_timer.setInterval(TICK_MS)
         self._walk_timer.timeout.connect(self._walk_tick)
 
+        # Climb movement timer
+        self._climb_timer = QTimer(self)
+        self._climb_timer.setInterval(TICK_MS)
+        self._climb_timer.timeout.connect(self._climb_tick)
+
         # Walk direction: 1 = right, -1 = left
         self._walk_direction: int = 1
+
+        # Climbing state
+        self._climb_edge = None  # Edge being climbed
+        self._climb_direction: int = -1  # -1 = up, 1 = down
+
+        # Walking on window surface
+        self._on_window_surface: bool = False
+        self._window_surface_y: int = 0
+        self._window_edge = None  # Edge we're walking on
 
     # ------------------------------------------------------------------
     # Deferred dependency injection
@@ -122,6 +145,10 @@ class StateMachine(QObject):
     def set_bubble(self, speech_bubble):
         """Connect the speech bubble widget after construction."""
         self._bubble = speech_bubble
+
+    def set_window_detector(self, detector):
+        """Connect the window detector after construction."""
+        self._window_detector = detector
 
     # ------------------------------------------------------------------
     # Core transition
@@ -162,9 +189,16 @@ class StateMachine(QObject):
         if duration is not None:
             self._state_timer.start(duration)
 
-        # Start walk movement if entering WALKING
-        if new_state == PetState.WALKING:
+        # Stop climbing timer if leaving climb
+        self._climb_timer.stop()
+
+        # Start walk movement if entering WALKING or WALKING_ON_WINDOW
+        if new_state in (PetState.WALKING, PetState.WALKING_ON_WINDOW):
             self._walk_timer.start()
+
+        # Start climb movement if entering CLIMBING
+        if new_state == PetState.CLIMBING:
+            self._climb_timer.start()
 
         self.state_changed.emit(new_state)
 
@@ -177,12 +211,13 @@ class StateMachine(QObject):
         """Return duration in ms for the given state, or None if no timer."""
         if state == PetState.IDLE:
             return random.randint(IDLE_MIN_MS, IDLE_MAX_MS)
-        if state == PetState.WALKING:
+        if state in (PetState.WALKING, PetState.WALKING_ON_WINDOW):
             return random.randint(WALK_MIN_MS, WALK_MAX_MS)
         if state == PetState.SLEEPING:
             return random.randint(SLEEP_MIN_MS, SLEEP_MAX_MS)
         if state == PetState.TYPING:
             return 5000
+        # CLIMBING has no timer — ends when reaching top or bottom of edge
         # Reaction states, FALLING, DRAGGING: no timer
         return None
 
@@ -194,16 +229,37 @@ class StateMachine(QObject):
         """Decide what to do when the current state's duration expires."""
         if self._state == PetState.IDLE:
             roll = random.random()
-            if roll < 0.60:
+            if roll < 0.50:
                 self.transition(PetState.IDLE)
-            elif roll < 0.90:
+            elif roll < 0.80:
                 self._walk_direction = random.choice([-1, 1])
                 self.transition(PetState.WALKING)
+            elif roll < 0.80 + WALK_ON_WINDOW_PROB:
+                # Try to climb a nearby window
+                if self._try_start_climbing():
+                    return
+                self.transition(PetState.IDLE)
             else:
                 self.transition(PetState.SLEEPING)
 
         elif self._state == PetState.WALKING:
+            # Chance to start climbing if near a window edge
+            if random.random() < 0.25 and self._try_start_climbing():
+                return
             self.transition(PetState.IDLE)
+
+        elif self._state == PetState.WALKING_ON_WINDOW:
+            # After walking on window, either idle on window or climb down/fall
+            if random.random() < 0.5:
+                self.transition(PetState.IDLE)
+            else:
+                # Fall off the window
+                self._on_window_surface = False
+                if self._physics is not None:
+                    self.transition(PetState.FALLING)
+                    self._physics.start_falling(0, 0)
+                else:
+                    self.transition(PetState.IDLE)
 
         elif self._state == PetState.SLEEPING:
             wake_msgs = ["Good morning!", "That was a nice nap!", "*stretch*"]
@@ -232,7 +288,23 @@ class StateMachine(QObject):
 
         new_x = current_x + int(WALK_SPEED * self._walk_direction)
 
-        # Screen bounds check
+        # If walking on a window, constrain to window edges
+        if self._state == PetState.WALKING_ON_WINDOW and self._window_edge is not None:
+            edge = self._window_edge
+            left = edge.x
+            right = edge.x + edge.width - SPRITE_SIZE
+
+            if new_x <= left:
+                new_x = left
+                self._walk_direction = 1
+            elif new_x >= right:
+                new_x = right
+                self._walk_direction = -1
+
+            self._window.move_to(new_x, current_y)
+            return
+
+        # Screen bounds check (normal walking on desktop)
         screen = QApplication.primaryScreen()
         if screen is not None:
             geo = screen.availableGeometry()
@@ -246,7 +318,87 @@ class StateMachine(QObject):
                 new_x = right
                 self._walk_direction = -1
 
-        self._window.move(new_x, current_y)
+        self._window.move_to(new_x, current_y)
+
+    # ------------------------------------------------------------------
+    # Climbing logic
+    # ------------------------------------------------------------------
+
+    def _try_start_climbing(self) -> bool:
+        """Try to find a nearby window edge to climb. Returns True if started."""
+        if self._window_detector is None:
+            return False
+        edge = self._window_detector.find_climbable_edge(
+            self._window.x(), self._window.y(), SPRITE_SIZE
+        )
+        if edge is None:
+            return False
+        self._climb_edge = edge
+        self._climb_direction = -1  # climb up
+        self.transition(PetState.CLIMBING, speech=random.choice(["Wheee!", "*climb climb*", "Up we go!"]))
+        return True
+
+    def _climb_tick(self):
+        """Move the pet vertically along a window edge."""
+        if self._climb_edge is None:
+            self.transition(PetState.IDLE)
+            return
+
+        current_y = self._window.y()
+        new_y = current_y + int(CLIMB_SPEED * self._climb_direction)
+
+        edge = self._climb_edge
+        edge_top = edge.y
+        edge_bottom = edge.y + edge.height - SPRITE_SIZE
+
+        # Reached the top of the edge — step onto the window title bar
+        if new_y <= edge_top:
+            new_y = edge_top - SPRITE_SIZE  # sit on top of the window
+            self._climb_timer.stop()
+            self._on_window_surface = True
+            self._window_surface_y = new_y
+            # Find the top edge to get bounds for walking
+            for e in self._window_detector.edges:
+                if e.edge_type == "top" and e.window_title == edge.window_title:
+                    self._window_edge = e
+                    break
+            self._window.move_to(self._window.x(), new_y)
+            self._walk_direction = random.choice([-1, 1])
+            self.transition(PetState.WALKING_ON_WINDOW)
+            return
+
+        # Reached the bottom — fall off
+        if new_y >= edge_bottom:
+            self._climb_timer.stop()
+            self._climb_edge = None
+            if self._physics is not None:
+                self.transition(PetState.FALLING)
+                self._physics.start_falling(0, 0)
+            else:
+                self.transition(PetState.IDLE)
+            return
+
+        # Position pet against the edge
+        if edge.edge_type == "left":
+            target_x = edge.x - SPRITE_SIZE
+        else:
+            target_x = edge.x + edge.width
+        self._window.move_to(target_x, new_y)
+
+    def on_landed_on_window(self, surface_y: int):
+        """Physics engine signals the pet landed on a window title bar."""
+        self._on_window_surface = True
+        self._window_surface_y = surface_y
+        # Find which edge we landed on
+        if self._window_detector is not None:
+            pet_cx = self._window.x() + SPRITE_SIZE // 2
+            for e in self._window_detector.edges:
+                if e.edge_type == "top" and e.x <= pet_cx <= e.x + e.width:
+                    if abs((e.y - SPRITE_SIZE) - surface_y) < 5:
+                        self._window_edge = e
+                        break
+        self._walk_direction = random.choice([-1, 1])
+        self.transition(PetState.WALKING_ON_WINDOW)
 
     # ------------------------------------------------------------------
     # Event handlers (public API)
@@ -272,6 +424,9 @@ class StateMachine(QObject):
 
     def _on_landed(self):
         """Physics engine signals the pet has landed on the ground."""
+        self._on_window_surface = False
+        self._window_edge = None
+        self._climb_edge = None
         self.transition(PetState.IDLE)
 
     def on_hook_event(self, event_name: str, data: dict):

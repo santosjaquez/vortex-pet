@@ -842,6 +842,90 @@ def _gen_fall(p: QPainter, frame: int, total: int):
                   tail_wag=math.sin(t * math.pi * 4) * 0.8)
 
 
+def _draw_legs_climb(p: QPainter, cx: float, cy: float, phase: float):
+    """Draw legs spread out gripping a vertical surface, with climbing motion.
+
+    Arms/legs alternate position each frame to simulate upward climbing.
+    """
+    # Left arm (upper-left), right arm (upper-right),
+    # left leg (lower-left), right leg (lower-right)
+    # Alternate pairs: frame moves arm_L+leg_R up, then arm_R+leg_L up
+    offset_a = math.sin(phase * math.pi * 2) * 5  # pair A offset
+    offset_b = math.sin(phase * math.pi * 2 + math.pi) * 5  # pair B offset
+
+    limbs = [
+        # (x_off, y_off, is_pair_a, toe_dir_x, toe_dir_y)
+        (-22, -10 + offset_a, True, -1, 0),   # left arm — reaches left
+        (22, -10 + offset_b, False, 1, 0),     # right arm — reaches right
+        (-18, 14 + offset_b, False, -1, 0),    # left leg — reaches left
+        (18, 14 + offset_a, True, 1, 0),       # right leg — reaches right
+    ]
+
+    for ox, oy, _, toe_dx, toe_dy in limbs:
+        lx = cx + ox
+        ly = cy + oy
+        p.setPen(QPen(OUTLINE, 1.0))
+        p.setBrush(BODY_PINK)
+        leg_path = QPainterPath()
+        # Limbs stretched outward (horizontal orientation)
+        if ox < 0:
+            leg_path.addRoundedRect(QRectF(lx - 7, ly - 3, 10, 7), 3, 3)
+        else:
+            leg_path.addRoundedRect(QRectF(lx - 3, ly - 3, 10, 7), 3, 3)
+        p.drawPath(leg_path)
+
+        # Toes (gripping outward)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(BODY_PINK_DARK)
+        toe_base_x = lx + toe_dx * 6
+        toe_base_y = ly
+        for t in range(-1, 2):
+            tx = toe_base_x
+            ty = toe_base_y + t * 2.5
+            p.drawEllipse(QPointF(tx, ty), 1.2, 1.5)
+
+
+def _gen_climb(p: QPainter, frame: int, total: int):
+    cx, cy = SIZE // 2, SIZE // 2 + 4
+    t = frame / total
+
+    # Body tilted ~70 degrees to one side (clinging to vertical surface)
+    tilt = -70
+
+    # Slight vertical bob to simulate upward movement
+    climb_bob = math.sin(t * math.pi * 2) * 3
+
+    # Draw tail first (behind body), swept down by gravity
+    p.save()
+    p.translate(cx, cy + climb_bob)
+    p.rotate(tilt)
+    _draw_tail(p, 0, 2, 44, 34, wag=-0.4 + math.sin(t * math.pi * 2) * 0.2)
+    p.restore()
+
+    # Draw body (rotated)
+    _draw_body(p, cx, cy + climb_bob, tilt=tilt)
+
+    # Draw head (rotated, looking upward)
+    p.save()
+    p.translate(cx, cy + climb_bob)
+    p.rotate(tilt)
+    head_y_local = -12
+    _draw_head(p, 0, head_y_local, scale=1.0)
+
+    # Gills swept to one side (gravity/wind effect) — blown_back simulates this
+    _draw_gills(p, 0, head_y_local, phase=t, droop=0.0, blown_back=0.7)
+
+    # Eyes looking upward — use open eyes, drawn in rotated frame
+    _draw_eyes_open(p, 0, head_y_local, wide=True, blink=1.0)
+
+    # Determined smile
+    _draw_mouth_smile(p, 0, head_y_local)
+    p.restore()
+
+    # Draw climbing legs (not rotated — they grip the surface in screen space)
+    _draw_legs_climb(p, cx, cy + climb_bob, phase=t)
+
+
 GENERATORS = {
     "idle": _gen_idle,
     "walk": _gen_walk,
@@ -853,6 +937,7 @@ GENERATORS = {
     "confused": _gen_confused,
     "celebrate": _gen_celebrate,
     "fall": _gen_fall,
+    "climb": _gen_climb,
 }
 
 

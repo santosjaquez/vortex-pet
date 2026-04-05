@@ -18,6 +18,7 @@ from vortex.speech_bubble import SpeechBubble
 from vortex.physics import PhysicsEngine
 from vortex.state_machine import StateMachine, PetState
 from vortex.event_router import EventRouter
+from vortex.window_detector import WindowDetector
 
 
 def _cleanup_socket():
@@ -45,10 +46,13 @@ def main():
     physics = PhysicsEngine(pet)
     fsm = StateMachine(renderer, pet)
     router = EventRouter()
+    win_detector = WindowDetector()
 
     # -- Deferred injection -----------------------------------------------
     fsm.set_physics(physics)
     fsm.set_bubble(bubble)
+    fsm.set_window_detector(win_detector)
+    physics.set_window_detector(win_detector)
 
     # -- Wire signals -----------------------------------------------------
 
@@ -66,8 +70,12 @@ def main():
     # EventRouter hook_event(str, dict) -> StateMachine.on_hook_event(str, dict)
     router.hook_event.connect(fsm.on_hook_event)
 
-    # -- Start socket server ----------------------------------------------
+    # PhysicsEngine landed_on_window(int) -> StateMachine
+    physics.landed_on_window.connect(fsm.on_landed_on_window)
+
+    # -- Start socket server and window detector --------------------------
     router.start()
+    win_detector.start()
     atexit.register(_cleanup_socket)
 
     # -- Place pet on screen, start idle ----------------------------------

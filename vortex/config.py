@@ -33,3 +33,7 @@ SLEEP_MAX_MS = 60000
 BUBBLE_DURATION_MS = 3500
 BUBBLE_MAX_WIDTH = 250
 BUBBLE_FADE_MS = 500
+
+# Window interaction
+CLIMB_SPEED = 1.0     # pixels per tick when climbing
+WALK_ON_WINDOW_PROB = 0.15  # probability of walking toward a window edge
