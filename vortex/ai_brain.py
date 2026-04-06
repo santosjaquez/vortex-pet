@@ -14,9 +14,11 @@ from urllib.error import URLError
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL = "qwen2.5:3b"
-VISION_MODEL = "moondream"
+OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
+OLLAMA_BASE_URL = "http://localhost:11434"
+MODEL = "gemma4:e2b"
+# Vision via native model is blocked by Ollama bug #15299
+# Using OCR fallback until fixed
 MIN_REQUEST_INTERVAL = 3.0  # seconds between AI requests
 
 SYSTEM_PROMPT = """You are Vortex, a sharp and witty AI assistant that lives on a developer's desktop as a compact companion. You observe their workflow and make concise, useful comments.
@@ -34,36 +36,39 @@ Rules:
 
 
 class _AiWorker(QThread):
-    """Background worker that calls Ollama API."""
+    """Background worker that calls Ollama chat API."""
     response_ready = pyqtSignal(str)
 
-    def __init__(self, prompt: str, model: str = None, images: list = None, parent=None):
+    def __init__(self, prompt: str, system: str = None, parent=None):
         super().__init__(parent)
         self._prompt = prompt
-        self._model = model or MODEL
-        self._images = images  # list of base64-encoded images
+        self._system = system or SYSTEM_PROMPT
 
     def run(self):
         try:
-            payload = {
-                "model": self._model,
-                "prompt": self._prompt,
-                "system": SYSTEM_PROMPT,
+            # Gemma 4: no system role support, prepend to user message
+            # think: false required or responses go to thinking field only
+            full_prompt = f"{self._system}\n\n{self._prompt}"
+            messages = [
+                {"role": "user", "content": full_prompt},
+            ]
+            payload = json.dumps({
+                "model": MODEL,
+                "messages": messages,
                 "stream": False,
+                "think": False,
                 "options": {
                     "temperature": 0.8,
                     "num_predict": 80,
                     "top_p": 0.9,
                 }
-            }
-            if self._images:
-                payload["images"] = self._images
-            data_bytes = json.dumps(payload).encode()
-            req = Request(OLLAMA_URL, data=data_bytes,
+            }).encode()
+            req = Request(OLLAMA_CHAT_URL, data=payload,
                          headers={"Content-Type": "application/json"})
             with urlopen(req, timeout=60) as resp:
                 data = json.loads(resp.read())
-                text = data.get("response", "").strip()
+                text = data.get("message", {}).get("content", "").strip()
+                # Take first paragraph only, remove quotes
                 text = text.split("\n")[0].strip('" ')
                 if text:
                     self.response_ready.emit(text)
@@ -88,7 +93,7 @@ class AiBrain(QObject):
     def _check_ollama(self) -> bool:
         """Check if Ollama is running."""
         try:
-            with urlopen("http://localhost:11434/", timeout=2) as resp:
+            with urlopen(OLLAMA_BASE_URL, timeout=2) as resp:
                 return resp.status == 200
         except Exception:
             return False
