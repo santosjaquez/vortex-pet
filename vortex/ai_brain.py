@@ -166,6 +166,69 @@ class AiBrain(QObject):
         worker = self._spawn_worker(prompt, think=use_think)
         worker.response_ready.connect(self._on_chat_response)
 
+    def search_and_reply(self, user_message: str):
+        """Search the web and reply with results.
+
+        Args:
+            user_message: The user's search request.
+        """
+        if not self._check_ollama():
+            self.message_ready.emit("Ollama no está corriendo.")
+            return
+
+        from vortex.web_search import search_web
+
+        # Extract search query (remove trigger keywords)
+        query = user_message
+        for kw in ["busca", "search", "google", "investiga", "averigua",
+                    "encuentra", "look up", "dime sobre"]:
+            query = query.lower().replace(kw, "").strip()
+        query = query.strip("¿?.,! ")
+
+        if not query:
+            self.message_ready.emit("No entendí qué buscar.")
+            return
+
+        results = search_web(query)
+        self._chat_history.append(("human", f"[Búsqueda web: {query}]"))
+
+        prompt = (
+            f"{self._mood.summary()}\n\n"
+            f"El usuario pidió buscar en internet: \"{user_message}\"\n\n"
+            f"Resultados de búsqueda:\n{results}\n\n"
+            f"Resume los resultados en 2-3 oraciones útiles. Responde en español."
+        )
+
+        worker = self._spawn_worker(prompt)
+        worker.response_ready.connect(self._on_chat_response)
+
+    def fetch_and_discuss(self, url: str, user_message: str):
+        """Fetch a URL and discuss its content.
+
+        Args:
+            url: The URL to fetch.
+            user_message: The user's full message for context.
+        """
+        if not self._check_ollama():
+            self.message_ready.emit("Ollama no está corriendo.")
+            return
+
+        from vortex.web_search import fetch_url
+
+        content = fetch_url(url)
+        self._chat_history.append(("human", f"[URL: {url}] {user_message}"))
+
+        prompt = (
+            f"{self._mood.summary()}\n\n"
+            f"El usuario compartió una URL: {url}\n"
+            f"Mensaje: \"{user_message}\"\n\n"
+            f"Contenido de la página:\n{content[:2000]}\n\n"
+            f"Resume o comenta el contenido en 2-3 oraciones. Responde en español."
+        )
+
+        worker = self._spawn_worker(prompt)
+        worker.response_ready.connect(self._on_chat_response)
+
     def _on_chat_response(self, text: str):
         """Store Vortex's reply in chat history."""
         self._chat_history.append(("vortex", text))

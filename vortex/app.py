@@ -8,6 +8,7 @@ import sys
 import signal
 import atexit
 import os
+import re
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QTimer
@@ -94,15 +95,26 @@ def main():
     chat_brain = AiBrain(mood)
     chat_brain.message_ready.connect(chat.add_vortex_message)
 
-    # Keywords that trigger screen analysis
+    # Keywords that trigger special modes
     _SCREEN_KEYWORDS = ["pantalla", "screen", "mira", "look", "ve mi", "que ves",
                         "what do you see", "que hay", "screenshot", "captura"]
+    _SEARCH_KEYWORDS = ["busca", "search", "google", "investiga", "averigua",
+                        "encuentra", "look up", "dime sobre", "que es", "quien es",
+                        "what is", "who is"]
+    _URL_PATTERN = re.compile(r'https?://\S+')
 
     def on_chat_send(text):
         chat.show_typing_indicator()
         text_lower = text.lower()
-        if any(kw in text_lower for kw in _SCREEN_KEYWORDS):
+
+        # Check for URL in message
+        url_match = _URL_PATTERN.search(text)
+        if url_match:
+            chat_brain.fetch_and_discuss(url_match.group(), text)
+        elif any(kw in text_lower for kw in _SCREEN_KEYWORDS):
             chat_brain.analyze_screen(text)
+        elif any(kw in text_lower for kw in _SEARCH_KEYWORDS):
+            chat_brain.search_and_reply(text)
         else:
             chat_brain.generate_chat_reply(text)
     chat.user_message.connect(on_chat_send)
