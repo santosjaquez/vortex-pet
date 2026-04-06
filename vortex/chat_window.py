@@ -263,13 +263,13 @@ class ChatWindow(QWidget):
         self._append_bubble(text, is_user=False)
 
     def show_typing_indicator(self) -> None:
-        """Show a 'Vortex is thinking...' indicator."""
+        """Show a '...' indicator."""
         if self._typing_label is not None:
             return
-        bubble = _MessageBubble("Vortex is thinking...", is_user=False, icon=self._vortex_icon)
+        bubble = _MessageBubble("...", is_user=False, icon=self._vortex_icon)
         # Style the typing indicator with italic text
         for child in bubble.findChildren(QLabel):
-            if child.text() == "Vortex is thinking...":
+            if child.text() == "...":
                 child.setStyleSheet(
                     "QLabel {"
                     "  background-color: #F0F0F0;"

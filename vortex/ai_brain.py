@@ -39,15 +39,15 @@ class _AiWorker(QThread):
     """Background worker that calls Ollama chat API."""
     response_ready = pyqtSignal(str)
 
-    def __init__(self, prompt: str, system: str = None, parent=None):
+    def __init__(self, prompt: str, system: str = None, think: bool = False, parent=None):
         super().__init__(parent)
         self._prompt = prompt
         self._system = system or SYSTEM_PROMPT
+        self._think = think
 
     def run(self):
         try:
             # Gemma 4: no system role support, prepend to user message
-            # think: false required or responses go to thinking field only
             full_prompt = f"{self._system}\n\n{self._prompt}"
             messages = [
                 {"role": "user", "content": full_prompt},
@@ -56,20 +56,28 @@ class _AiWorker(QThread):
                 "model": MODEL,
                 "messages": messages,
                 "stream": False,
-                "think": False,
+                "think": self._think,
                 "options": {
                     "temperature": 0.8,
-                    "num_predict": 80,
+                    "num_predict": 200 if self._think else 80,
                     "top_p": 0.9,
                 }
             }).encode()
             req = Request(OLLAMA_CHAT_URL, data=payload,
                          headers={"Content-Type": "application/json"})
-            with urlopen(req, timeout=60) as resp:
+            with urlopen(req, timeout=120 if self._think else 60) as resp:
                 data = json.loads(resp.read())
-                text = data.get("message", {}).get("content", "").strip()
-                # Take first paragraph only, remove quotes
-                text = text.split("\n")[0].strip('" ')
+                msg = data.get("message", {})
+                text = msg.get("content", "").strip()
+                # If thinking mode and content is empty, extract from thinking
+                if not text and self._think:
+                    thinking = msg.get("thinking", "")
+                    # Get the last paragraph as the answer
+                    parts = thinking.strip().split("\n\n")
+                    text = parts[-1].strip() if parts else ""
+                # Clean up
+                if text:
+                    text = text.split("\n")[0].strip('" ')
                 if text:
                     self.response_ready.emit(text)
         except Exception as e:
@@ -125,7 +133,7 @@ class AiBrain(QObject):
         """
         now = time.time()
         if not self._check_ollama():
-            self.message_ready.emit("*blub* Ollama isn't running, I can't think right now!")
+            self.message_ready.emit("Ollama no está corriendo.")
             return
 
         self._last_request_time = now
@@ -143,14 +151,19 @@ class AiBrain(QObject):
             else:
                 history_text += f"Vortex: {text}\n"
 
+        # Detect if user wants deep thinking
+        _THINK_KEYWORDS = ["piensa", "think", "analiza", "analyze", "razona",
+                           "reason", "explica detallado", "think hard", "piensalo bien"]
+        use_think = any(kw in user_message.lower() for kw in _THINK_KEYWORDS)
+
+        max_words = "50 words" if use_think else "20 words"
         prompt = (
             f"{self._mood.summary()}\n\n"
             f"Conversation so far:\n{history_text}\n"
-            f"Reply as Vortex (max 20 words, stay in character, remember the conversation):"
+            f"Reply as Vortex (max {max_words}, stay in character, remember the conversation):"
         )
 
-        worker = self._spawn_worker(prompt)
-        # Store the pending message so we can add the reply to history
+        worker = self._spawn_worker(prompt, think=use_think)
         worker.response_ready.connect(self._on_chat_response)
 
     def _on_chat_response(self, text: str):
@@ -218,9 +231,9 @@ class AiBrain(QObject):
         worker = self._spawn_worker(prompt)
         worker.response_ready.connect(self._on_chat_response)
 
-    def _spawn_worker(self, prompt: str) -> _AiWorker:
+    def _spawn_worker(self, prompt: str, think: bool = False) -> _AiWorker:
         """Create and start a worker thread for the given prompt."""
-        worker = _AiWorker(prompt)
+        worker = _AiWorker(prompt, think=think)
         worker.response_ready.connect(self._on_response)
         worker.finished.connect(lambda: self._cleanup_worker(worker))
         self._workers.append(worker)
