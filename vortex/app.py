@@ -23,6 +23,7 @@ from vortex.window_detector import WindowDetector
 from vortex.mood import MoodState
 from vortex.ai_brain import AiBrain
 from vortex.chat_window import ChatWindow
+from vortex.proactive import ProactiveBrain
 
 
 def _cleanup():
@@ -113,6 +114,11 @@ def main():
         else:
             chat.show_near(pet.x(), pet.y())
     pet.double_clicked.connect(on_pet_double_click)
+
+    # Proactive behavior: Vortex speaks on its own
+    proactive = ProactiveBrain(mood)
+    proactive.comment_ready.connect(brain.generate_comment)
+    proactive.start()
 
     # Mood decay timer (every 30 seconds)
     mood_timer = QTimer()

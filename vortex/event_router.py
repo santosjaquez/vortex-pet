@@ -124,6 +124,8 @@ class EventRouter(QObject):
 
         parsed = self._parse_event(payload)
         event_name = parsed.get("hook_event_name", "unknown")
+        import sys
+        print(f"[Vortex Hook] {event_name}: {parsed.get('tool_name', '')}", file=sys.stderr, flush=True)
         self.hook_event.emit(event_name, parsed)
 
     # ------------------------------------------------------------------
